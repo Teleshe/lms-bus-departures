@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LMS — Hammersmith Hospital Bus Departures</title>
+<style>
+  :root {
+    --ink:#17202a;
+    --muted:#66717c;
+    --line:#dfe4e8;
+    --accent:#006a8e;
+    --bg:#ffffff;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; width:100%; height:100%; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    overflow:hidden;
+  }
+  .page {
+    width:100vw; height:100vh;
+    padding:5vh 6vw 4vh;
+    display:flex; flex-direction:column;
+  }
+  header {
+    display:flex; justify-content:space-between; align-items:flex-end;
+    padding-bottom:2.5vh;
+    border-bottom:3px solid var(--accent);
+  }
+  .brand { font-size:clamp(18px,2vw,30px); font-weight:700; letter-spacing:.08em; }
+  .place { text-align:right; }
+  .place h1 { margin:0; font-size:clamp(26px,3vw,48px); font-weight:700; }
+  .place p { margin:.5vh 0 0; font-size:clamp(14px,1.3vw,22px); color:var(--muted); }
+  .heading {
+    margin:3vh 0 1.5vh;
+    display:flex; justify-content:space-between; align-items:baseline;
+  }
+  .heading h2 { margin:0; font-size:clamp(24px,2.3vw,38px); }
+  .stop { font-size:clamp(14px,1.3vw,21px); color:var(--muted); }
+  #departures { display:grid; gap:1.2vh; flex:1; min-height:0; }
+  .row {
+    display:grid;
+    grid-template-columns:10% 1fr auto;
+    align-items:center;
+    padding:1.2vh 1.5vw;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:#fff;
+  }
+  .route { font-size:clamp(26px,3vw,52px); font-weight:800; }
+  .destination { font-size:clamp(20px,2.1vw,36px); font-weight:600; }
+  .time { font-size:clamp(24px,2.6vw,44px); font-weight:800; text-align:right; }
+  .empty { display:flex; align-items:center; justify-content:center; text-align:center; font-size:clamp(22px,2vw,34px); color:var(--muted); }
+  footer {
+    display:flex; justify-content:space-between; align-items:center; gap:2vw;
+    padding-top:2vh; color:var(--muted);
+    font-size:clamp(12px,1.1vw,18px);
+  }
+  .live { display:flex; align-items:center; gap:.6em; white-space:nowrap; }
+  .dot { width:.65em; height:.65em; border-radius:50%; background:#1b8a5a; }
+  .error .dot { background:#b35a00; }
+  #updated { text-align:right; }
+  @media (max-width:800px) {
+    .page { padding:4vh 4vw; }
+    .row { grid-template-columns:18% 1fr auto; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="brand">LMS</div>
+    <div class="place">
+      <h1>Hammersmith Hospital</h1>
+      <p>Bus departures &middot; Stop B</p>
+    </div>
+  </header>
+
+  <div class="heading">
+    <h2>Next buses</h2>
+    <div class="stop">Du Cane Road</div>
+  </div>
+
+  <main id="departures" aria-live="polite">
+    <div class="empty">Loading live departures&hellip;</div>
+  </main>
+
+  <footer id="footer">
+    <div class="live"><span class="dot"></span><span>Live departures</span></div>
+    <div id="updated">Connecting&hellip;</div>
+  </footer>
+</div>
+
+<script>
+/*
+  SETUP
+  -----
+  1. Deploy this file together with netlify.toml and netlify/functions/arrivals.js.
+  2. In Appspace, set the Web View card's embed option to Native Webview.
+  3. Point the card at the site URL.
+
+  The screen never calls TfL directly. It calls the site's own /api/arrivals
+  endpoint, which calls TfL from Netlify's servers. That means the player only
+  needs to reach the Netlify domain, which it already does, and the TfL key is
+  not exposed on the screen.
+
+  Written in old-style JavaScript with XMLHttpRequest on purpose: some Appspace
+  player browsers are years behind desktop Chrome and choke on newer syntax.
+*/
+
+var DATA_URL = "https://calm-faloodeh-6e2d5b.netlify.app/api/arrivals";
+var REFRESH_MS = 30000;
+var RETRY_MS = 8000;
+
+var departuresEl = document.getElementById("departures");
+var updatedEl = document.getElementById("updated");
+var footerEl = document.getElementById("footer");
+
+var lastGoodRows = null;
+var lastGoodTime = "";
+var failures = 0;
+var refreshTimer = null;
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatMinutes(seconds) {
+  var mins = Math.round(seconds / 60);
+  if (!(mins > 0)) return "Due";
+  return mins + " min";
+}
+
+function showRows(items) {
+  if (!items || !items.length) {
+    departuresEl.innerHTML =
+      '<div class="empty">No buses due at the moment.</div>';
+    return;
+  }
+  var html = "";
+  for (var i = 0; i < items.length && i < 5; i++) {
+    html +=
+      '<div class="row">' +
+        '<div class="route">' + escapeHtml(items[i].route) + '</div>' +
+        '<div class="destination">' + escapeHtml(items[i].destination) + '</div>' +
+        '<div class="time">' + escapeHtml(formatMinutes(items[i].seconds)) + '</div>' +
+      '</div>';
+  }
+  departuresEl.innerHTML = html;
+}
+
+function fail(reason) {
+  failures++;
+  footerEl.className = "error";
+  // The reason is shown on screen because nobody can open a console on a
+  // reception display. It is small and grey, so it reads as a status note.
+  updatedEl.innerHTML =
+    escapeHtml("Live data unavailable (" + reason + ")") +
+    (lastGoodTime ? escapeHtml(" · showing " + lastGoodTime) : "");
+
+  if (lastGoodRows && failures < 10) {
+    showRows(lastGoodRows);
+  } else {
+    departuresEl.innerHTML =
+      '<div class="empty">Live departures temporarily unavailable.<br>' +
+      'Check the stop screen on Du Cane Road.</div>';
+  }
+  schedule(RETRY_MS);
+}
+
+function schedule(delay) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(load, delay);
+}
+
+function load() {
+  var xhr = new XMLHttpRequest();
+  var done = false;
+
+  xhr.open("GET", DATA_URL + "?t=" + new Date().getTime(), true);
+  xhr.timeout = 12000;
+
+  xhr.onreadystatechange = function () {
+    if (xhr.readyState !== 4 || done) return;
+    done = true;
+
+    if (xhr.status !== 200) {
+      fail(xhr.status ? "HTTP " + xhr.status : "no network");
+      return;
+    }
+
+    var payload;
+    try {
+      payload = JSON.parse(xhr.responseText);
+    } catch (e) {
+      fail("bad response");
+      return;
+    }
+
+    if (!payload.ok) {
+      fail(payload.error || "TfL error");
+      return;
+    }
+
+    failures = 0;
+    lastGoodRows = payload.departures;
+    lastGoodTime = payload.generatedAt;
+    footerEl.className = "";
+    showRows(payload.departures);
+    updatedEl.innerHTML = escapeHtml("Updated " + payload.generatedAt);
+    schedule(REFRESH_MS);
+  };
+
+  xhr.ontimeout = function () {
+    if (done) return;
+    done = true;
+    fail("timed out");
+  };
+
+  xhr.onerror = function () {
+    if (done) return;
+    done = true;
+    fail("blocked or offline");
+  };
+
+  try {
+    xhr.send();
+  } catch (e) {
+    if (!done) { done = true; fail("send failed"); }
+  }
+}
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LMS — Bus screen diagnostics</title>
+<style>
+  body { margin:0; font-family:Arial, Helvetica, sans-serif; color:#17202a; background:#fff; }
+  .page { padding:4vh 5vw; }
+  h1 { font-size:clamp(20px,2.2vw,34px); margin:0 0 2vh; }
+  .test { border:1px solid #dfe4e8; border-radius:10px; padding:1.4vh 1.5vw; margin-bottom:1.2vh; }
+  .name { font-size:clamp(15px,1.5vw,24px); font-weight:700; }
+  .result { font-size:clamp(14px,1.4vw,22px); margin-top:.6vh; word-break:break-word; }
+  .pass { color:#1b8a5a; }
+  .fail { color:#b3271b; }
+  .wait { color:#66717c; }
+  .meta { font-size:clamp(12px,1.2vw,18px); color:#66717c; margin-top:2vh; word-break:break-word; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Bus screen diagnostics</h1>
+
+  <div class="test">
+    <div class="name">1. JavaScript runs on this device</div>
+    <div class="result fail" id="t1">No. If you are reading this, the player is not executing the page script.</div>
+  </div>
+
+  <div class="test">
+    <div class="name">2. Can reach this site's own API (Netlify)</div>
+    <div class="result wait" id="t2">Testing&hellip;</div>
+  </div>
+
+  <div class="test">
+    <div class="name">3. Can reach TfL directly from the screen</div>
+    <div class="result wait" id="t3">Testing&hellip;</div>
+  </div>
+
+  <div class="test">
+    <div class="name">4. Device clock</div>
+    <div class="result wait" id="t4">Checking&hellip;</div>
+  </div>
+
+  <div class="meta" id="meta"></div>
+</div>
+
+<script>
+var SITE_API = "https://calm-faloodeh-6e2d5b.netlify.app/api/arrivals";
+var TFL = "https://api.tfl.gov.uk/StopPoint/490007707E/Arrivals?app_key=234aa01f10b4466187963c1b6cea4f9c";
+
+function set(id, ok, text) {
+  var el = document.getElementById(id);
+  el.className = "result " + (ok ? "pass" : "fail");
+  el.innerHTML = text;
+}
+
+set("t1", true, "Yes. Script executed.");
+
+function test(id, url, label) {
+  var xhr = new XMLHttpRequest();
+  var done = false;
+  var started = new Date().getTime();
+
+  function finish(ok, text) {
+    if (done) return;
+    done = true;
+    var ms = new Date().getTime() - started;
+    set(id, ok, text + " (" + ms + "ms)");
+  }
+
+  try {
+    xhr.open("GET", url + (url.indexOf("?") === -1 ? "?" : "&") + "t=" + started, true);
+    xhr.timeout = 15000;
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status === 200) {
+        finish(true, "Reached " + label + ". Response length " + xhr.responseText.length + " characters.");
+        if (id === "t2") {
+          try {
+            var p = JSON.parse(xhr.responseText);
+            document.getElementById("t4").className = "result " + (p.generatedAt ? "pass" : "fail");
+            document.getElementById("t4").innerHTML =
+              "Server time (London): " + p.generatedAt +
+              " &nbsp;|&nbsp; Device clock: " + new Date().toString();
+          } catch (e) {}
+        }
+      } else if (xhr.status === 0) {
+        finish(false, "Blocked. No HTTP response at all, which points to a firewall, DNS or certificate problem on the player network.");
+      } else {
+        finish(false, "Reached " + label + " but it returned HTTP " + xhr.status + ".");
+      }
+    };
+    xhr.ontimeout = function () { finish(false, "Timed out after 15 seconds."); };
+    xhr.onerror = function () { finish(false, "Request failed before any response. Firewall, DNS or certificate."); };
+    xhr.send();
+  } catch (e) {
+    finish(false, "Threw an error: " + e.message);
+  }
+}
+
+test("t2", SITE_API, "the Netlify site");
+test("t3", TFL, "api.tfl.gov.uk");
+
+document.getElementById("meta").innerHTML =
+  "Page origin: " + location.origin +
+  "<br>Browser: " + navigator.userAgent +
+  "<br>Viewport: " + window.innerWidth + " x " + window.innerHeight;
+</script>
+</body>
+</html>
